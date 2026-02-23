@@ -341,6 +341,12 @@
             }
         }
 
+        function setObstacleMeshesVisible(visible) {
+            obstacles.forEach(obstacle => {
+                obstacle.visible = visible;
+            });
+        }
+
         // --- ゲームの状態 ---
         let gameState = "3D"; // "3D", "TRANSITION", "2D"
         const keys = { w:false, a:false, s:false, d:false, space:false, enter:false };
@@ -940,6 +946,7 @@
             // 映写機のチカチカ演出（壊れた映画館っぽさ）
             projectorLight.intensity = 2 + Math.random() * 0.2;
             updateHandInteraction();
+            setObstacleMeshesVisible(gameState === "3D");
 
             if (gameState === "3D") {
                 // 3Dモードのプレイヤー移動
