@@ -71,7 +71,7 @@
 <body>
         <div id="ui">
             <div class="title">🎬 影と次元のプロトタイプ</div>
-            <div class="instruction">【3Dモード】 WASD: 移動 / SPACE: ジャンプ / 箱を押す</div>
+            <div class="instruction">【3Dモード】 WASD: 移動 / SPACE: ジャンプ / 障害物を押す</div>
         <div class="instruction">【ハンド操作】 ピンチ: 掴む / 前後: 奥手前 / 上下: 持ち上げる</div>
             <div class="instruction">【ダイブ】 ENTER: 影を実体化＆映画の中へ</div>
             <div class="instruction" id="level-text" style="color:#ffeb3b; font-weight:bold; margin-top:10px;">ステージ: 1 / 3</div>
@@ -195,12 +195,17 @@
         player.castShadow = true;
         scene.add(player);
 
-        // 押せる箱 (3D)
+        // 押せる障害物 (3D)
         const boxSize = 2;
-        const pushBox = new THREE.Mesh(new THREE.BoxGeometry(boxSize, boxSize, boxSize), boxMat);
-        pushBox.castShadow = true;
-        scene.add(pushBox);
-        const grabbableObjects = [pushBox, player];
+        const obstacleCount = 3;
+        const obstacles = [];
+        for (let i = 0; i < obstacleCount; i++) {
+            const obstacle = new THREE.Mesh(new THREE.BoxGeometry(boxSize, boxSize, boxSize), boxMat);
+            obstacle.castShadow = true;
+            scene.add(obstacle);
+            obstacles.push(obstacle);
+        }
+        const grabbableObjects = [...obstacles, player];
 
         // ハンドカーソル（床面）
         const handCursor = new THREE.Mesh(
@@ -222,11 +227,15 @@
         const goal = new THREE.Mesh(new THREE.PlaneGeometry(2, 4), goalMat);
         movieObjects.add(goal);
         // 3D時にスクリーンへ映るリアルタイム投影プレビュー
-        const boxShadowPreview = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), previewShadowMat);
+        const obstacleShadowPreviews = [];
+        for (let i = 0; i < obstacleCount; i++) {
+            const preview = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), previewShadowMat);
+            preview.visible = false;
+            obstacleShadowPreviews.push(preview);
+            movieObjects.add(preview);
+        }
         const playerShadowPreview = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), previewPlayerShadowMat);
-        boxShadowPreview.visible = false;
         playerShadowPreview.visible = false;
-        movieObjects.add(boxShadowPreview);
         movieObjects.add(playerShadowPreview);
 
         // --- ステージ（レベル）データ ---
@@ -234,7 +243,11 @@
             {
                 // Level 1: 基本のダイブ
                 playerStart: {x: -3, z: 5},
-                boxStart: {x: 2, z: 2},
+                obstacleStarts: [
+                    {x: 2, z: 2},
+                    {x: 5, z: 3},
+                    {x: -1, z: 2}
+                ],
                 platforms: [
                     {x: -8, y: 0, w: 10, h: 2},
                     {x: 8, y: 0, w: 10, h: 2}
@@ -242,9 +255,13 @@
                 goal: {x: 10, y: 3}
             },
             {
-                // Level 2: 影の拡大（光源に箱を近づけると影が大きくなるギミック）
+                // Level 2: 影の拡大（光源に障害物を近づけると影が大きくなるギミック）
                 playerStart: {x: -5, z: 8},
-                boxStart: {x: 0, z: 5},
+                obstacleStarts: [
+                    {x: 0, z: 5},
+                    {x: 3, z: 6},
+                    {x: -3, z: 6}
+                ],
                 platforms: [
                     {x: -12, y: 0, w: 6, h: 2},
                     {x: 12, y: 0, w: 6, h: 2}
@@ -252,9 +269,13 @@
                 goal: {x: 13, y: 3}
             },
             {
-                // Level 3: 高低差（箱の上に乗ってダイブすると影が高い位置に生成される）
+                // Level 3: 高低差（障害物の上に乗ってダイブすると影が高い位置に生成される）
                 playerStart: {x: 0, z: 8},
-                boxStart: {x: 2, z: 4},
+                obstacleStarts: [
+                    {x: 2, z: 4},
+                    {x: -2, z: 4},
+                    {x: 0, z: 6}
+                ],
                 platforms: [
                     {x: -10, y: -2, w: 6, h: 2},
                     {x: 0, y: -5, w: 4, h: 2}, // 低い中間足場（落ちた時の復帰用）
@@ -265,25 +286,29 @@
         ];
 
         let currentLevel = 0;
-        let solidShadowMesh = null; // 実体化した影のメッシュ
+        let solidShadowMeshes = []; // 実体化した影のメッシュ
+        let activeShadowRectCount = 0;
 
         // --- ステージのセットアップ ---
         function setupLevel(index) {
             const lvl = levels[index];
 
-            // キャラと箱の初期化
+            // キャラと障害物の初期化
             player.position.set(lvl.playerStart.x, playerSize/2, lvl.playerStart.z);
-            pushBox.position.set(lvl.boxStart.x, boxSize/2, lvl.boxStart.z);
+            const starts = lvl.obstacleStarts || [{x: 2, z: 2}];
+            obstacles.forEach((obstacle, i) => {
+                const start = starts[i] || { x: (i - 1) * 3, z: 2 };
+                obstacle.position.set(start.x, boxSize / 2, start.z);
+            });
 
             // 既存の2D地形を削除
             platformsList.forEach(p => movieObjects.remove(p));
             platformsList = [];
             solidRects = [];
 
-            if(solidShadowMesh) {
-                movieObjects.remove(solidShadowMesh);
-                solidShadowMesh = null;
-            }
+            solidShadowMeshes.forEach(mesh => movieObjects.remove(mesh));
+            solidShadowMeshes = [];
+            activeShadowRectCount = 0;
 
             // 新しい地形を生成
             lvl.platforms.forEach(plat => {
@@ -305,13 +330,24 @@
         // 初期レベルをロード
         setupLevel(currentLevel);
 
+        function clearSolidShadows() {
+            if (solidShadowMeshes.length > 0) {
+                solidShadowMeshes.forEach(mesh => movieObjects.remove(mesh));
+                solidShadowMeshes = [];
+            }
+            if (activeShadowRectCount > 0) {
+                solidRects.splice(Math.max(0, solidRects.length - activeShadowRectCount), activeShadowRectCount);
+                activeShadowRectCount = 0;
+            }
+        }
+
         // --- ゲームの状態 ---
         let gameState = "3D"; // "3D", "TRANSITION", "2D"
         const keys = { w:false, a:false, s:false, d:false, space:false, enter:false };
 
         // 3Dプレイヤーの物理変数
         let vy3d = 0;
-        let vyBox = 0;
+        const obstacleVys = new Array(obstacleCount).fill(0);
         const gravity3d = -30;
         const jumpForce3d = 12;
 
@@ -423,7 +459,11 @@
         }
 
         function getGrabHalfSize(obj) {
-            return obj === pushBox ? boxSize / 2 : playerSize / 2;
+            return obstacles.includes(obj) ? boxSize / 2 : playerSize / 2;
+        }
+
+        function getObstacleIndex(obj) {
+            return obstacles.indexOf(obj);
         }
 
         function getObjectMinZ(obj) {
@@ -431,7 +471,7 @@
         }
 
         function getObjectMaxZ(obj) {
-            return obj === pushBox ? 14 : worldBounds.maxZ;
+            return obstacles.includes(obj) ? 14 : worldBounds.maxZ;
         }
 
         function releaseGrabbedObject() {
@@ -465,7 +505,7 @@
             let nearestDist = Infinity;
             for (const obj of grabbableObjects) {
                 const dist = Math.hypot(obj.position.x - cursorPoint.x, obj.position.z - cursorPoint.z);
-                const reach = obj === pushBox ? 2.3 : 1.8;
+                const reach = obstacles.includes(obj) ? 2.3 : 1.8;
                 if (dist < reach && dist < nearestDist) {
                     nearest = obj;
                     nearestDist = dist;
@@ -485,8 +525,9 @@
                 targetObj.position.z - depthZ
             );
             if (targetObj === player) vy3d = 0;
-            if (targetObj === pushBox) vyBox = 0;
-            const label = targetObj === pushBox ? "箱" : "プレイヤー";
+            const obstacleIndex = getObstacleIndex(targetObj);
+            if (obstacleIndex >= 0) obstacleVys[obstacleIndex] = 0;
+            const label = obstacleIndex >= 0 ? "障害物" : "プレイヤー";
             setHandStatus(`ハンド操作: ${label}を掴み中`, "#b2ff59");
         }
 
@@ -507,7 +548,8 @@
             grabbedObject.position.z = THREE.MathUtils.lerp(grabbedObject.position.z, tz, 0.2);
             grabbedObject.position.y = THREE.MathUtils.lerp(grabbedObject.position.y, ty, 0.3);
 
-            if (grabbedObject === pushBox) vyBox = 0;
+            const obstacleIndex = getObstacleIndex(grabbedObject);
+            if (obstacleIndex >= 0) obstacleVys[obstacleIndex] = 0;
             if (grabbedObject === player) vy3d = 0;
         }
 
@@ -684,16 +726,19 @@
         }
 
         function updateProjectionPreview() {
-            const projectedBox = getProjectedRect(pushBox, boxSize, boxSize);
             const projectedPlayer = getProjectedRect(player, playerSize, playerSize);
 
-            if (projectedBox) {
-                boxShadowPreview.visible = true;
-                boxShadowPreview.scale.set(projectedBox.w, projectedBox.h, 1);
-                boxShadowPreview.position.set(projectedBox.x, projectedBox.y, 0);
-            } else {
-                boxShadowPreview.visible = false;
-            }
+            obstacles.forEach((obstacle, i) => {
+                const preview = obstacleShadowPreviews[i];
+                const projectedObstacle = getProjectedRect(obstacle, boxSize, boxSize);
+                if (projectedObstacle) {
+                    preview.visible = true;
+                    preview.scale.set(projectedObstacle.w, projectedObstacle.h, 1);
+                    preview.position.set(projectedObstacle.x, projectedObstacle.y, 0);
+                } else {
+                    preview.visible = false;
+                }
+            });
 
             if (projectedPlayer) {
                 playerShadowPreview.visible = true;
@@ -710,6 +755,12 @@
             // プレイヤーがスクリーンに映る範囲にいるかチェック（簡易的）
             if (player.position.z < screenZ || player.position.z > projectorLight.position.z) return;
 
+            const shadowRects = obstacles
+                .map(obstacle => getProjectedRect(obstacle, boxSize, boxSize))
+                .filter(Boolean);
+            const pRect = getProjectedRect(player, playerSize, playerSize);
+            if (shadowRects.length === 0 || !pRect) return;
+
             gameState = "TRANSITION";
             playHitSound();
             shakeTime = 0.3; // 画面揺れ
@@ -720,22 +771,19 @@
             flash.style.opacity = '1';
             setTimeout(() => { flash.style.opacity = '0'; }, 50);
 
-            // 1. 箱の影を計算し、2D空間に実体化させる
-            const shadowRect = getProjectedRect(pushBox, boxSize, boxSize);
-            const pRect = getProjectedRect(player, playerSize, playerSize);
-            if (!shadowRect || !pRect) return;
-            
+            // 1. 障害物の影を計算し、2D空間に実体化させる
             // 既存の影があれば消す
-            if(solidShadowMesh) {
-                movieObjects.remove(solidShadowMesh);
-                solidRects.pop(); // 最後の要素（影）を削除
-            }
+            clearSolidShadows();
 
             // 実体化した影（真っ黒なブロック）をスクリーンに生成
-            solidShadowMesh = new THREE.Mesh(new THREE.PlaneGeometry(shadowRect.w, shadowRect.h), solidShadowMat);
-            solidShadowMesh.position.set(shadowRect.x, shadowRect.y, 0);
-            movieObjects.add(solidShadowMesh);
-            solidRects.push(shadowRect);
+            shadowRects.forEach(shadowRect => {
+                const solidShadowMesh = new THREE.Mesh(new THREE.PlaneGeometry(shadowRect.w, shadowRect.h), solidShadowMat);
+                solidShadowMesh.position.set(shadowRect.x, shadowRect.y, 0);
+                movieObjects.add(solidShadowMesh);
+                solidShadowMeshes.push(solidShadowMesh);
+                solidRects.push(shadowRect);
+            });
+            activeShadowRectCount = shadowRects.length;
             p2d.x = pRect.x;
             p2d.y = pRect.y;
             p2d.w = pRect.w;
@@ -747,7 +795,7 @@
             player.scale.set(pRect.w, pRect.h, 0.1);
             player.position.set(pRect.x, pRect.y, screenZ + 0.2);
             player.castShadow = false; // 2Dモード時は影を落とさない
-            boxShadowPreview.visible = false;
+            obstacleShadowPreviews.forEach(preview => preview.visible = false);
             playerShadowPreview.visible = false;
 
             document.getElementById('mode-text').innerText = "現在のモード: 2D（映画の中）";
@@ -794,17 +842,13 @@
                 setTimeout(() => { flash.style.backgroundColor = 'white'; }, 150);
             }, 50);
 
-            if(solidShadowMesh) {
-                movieObjects.remove(solidShadowMesh);
-                solidRects.pop();
-                solidShadowMesh = null;
-            }
+            clearSolidShadows();
 
             player.scale.set(1, 1, 1);
             player.castShadow = true;
             player.position.set(0, playerSize/2, 5); // 弾き出される位置
             vy3d = 0;
-            vyBox = 0;
+            obstacleVys.fill(0);
             handCursor.visible = false;
 
             transitionCameraTo3D();
@@ -835,7 +879,7 @@
             player.scale.set(1, 1, 1);
             player.castShadow = true;
             vy3d = 0;
-            vyBox = 0;
+            obstacleVys.fill(0);
             handCursor.visible = false;
             
             transitionCameraTo3D();
@@ -907,66 +951,129 @@
                 if(keys.d) dx += speed;
 
                 const isPlayerGrabbed = grabbedObject === player;
-                const isBoxGrabbed = grabbedObject === pushBox;
 
                 if (!isPlayerGrabbed) {
                     player.position.x += dx;
                     player.position.z += dz;
                 }
 
-                if (!isBoxGrabbed) {
-                    vyBox += gravity3d * dt;
-                    pushBox.position.y += vyBox * dt;
-                    if (pushBox.position.y < boxSize / 2) {
-                        pushBox.position.y = boxSize / 2;
-                        vyBox = 0;
+                // 障害物の重力
+                obstacles.forEach((obstacle, i) => {
+                    if (grabbedObject === obstacle) {
+                        obstacleVys[i] = 0;
+                        return;
                     }
-                } else {
-                    vyBox = 0;
+                    obstacleVys[i] += gravity3d * dt;
+                    obstacle.position.y += obstacleVys[i] * dt;
+                    if (obstacle.position.y < boxSize / 2) {
+                        obstacle.position.y = boxSize / 2;
+                        obstacleVys[i] = 0;
+                    }
+                });
+
+                // 障害物同士の積み上げ（XZが重なると下の障害物に乗る）
+                const boxHalf = boxSize / 2;
+                for (let pass = 0; pass < 3; pass++) {
+                    const order = obstacles.map((_, i) => i).sort((a, b) => obstacles[a].position.y - obstacles[b].position.y);
+                    for (const i of order) {
+                        const obstacle = obstacles[i];
+                        if (grabbedObject === obstacle) continue;
+
+                        let supportY = boxHalf;
+                        for (let j = 0; j < obstacles.length; j++) {
+                            if (i === j) continue;
+                            const other = obstacles[j];
+                            const overlapX = Math.abs(obstacle.position.x - other.position.x) < (boxSize - 0.05);
+                            const overlapZ = Math.abs(obstacle.position.z - other.position.z) < (boxSize - 0.05);
+                            if (!overlapX || !overlapZ) continue;
+
+                            const otherTop = other.position.y + boxHalf;
+                            const obstacleBottom = obstacle.position.y - boxHalf;
+                            if (obstacleBottom <= otherTop + 0.3 && obstacle.position.y >= other.position.y) {
+                                supportY = Math.max(supportY, otherTop + boxHalf);
+                            }
+                        }
+
+                        if (obstacle.position.y < supportY) {
+                            obstacle.position.y = supportY;
+                            obstacleVys[i] = 0;
+                        }
+                    }
+                }
+
+                // 同じ高さの障害物同士がめり込んだ場合は横方向に分離
+                for (let i = 0; i < obstacles.length; i++) {
+                    for (let j = i + 1; j < obstacles.length; j++) {
+                        const a = obstacles[i];
+                        const b = obstacles[j];
+                        const dxOb = a.position.x - b.position.x;
+                        const dzOb = a.position.z - b.position.z;
+                        const distX = Math.abs(dxOb);
+                        const distZ = Math.abs(dzOb);
+                        if (distX >= boxSize || distZ >= boxSize) continue;
+
+                        const distY = Math.abs(a.position.y - b.position.y);
+                        if (distY > boxSize * 0.55) continue;
+
+                        const overlapX = boxSize - distX;
+                        const overlapZ = boxSize - distZ;
+                        if (overlapX < overlapZ) {
+                            const push = overlapX / 2;
+                            const dir = Math.sign(dxOb || (Math.random() - 0.5));
+                            if (grabbedObject !== a) a.position.x += dir * push;
+                            if (grabbedObject !== b) b.position.x -= dir * push;
+                        } else {
+                            const push = overlapZ / 2;
+                            const dir = Math.sign(dzOb || (Math.random() - 0.5));
+                            if (grabbedObject !== a) a.position.z += dir * push;
+                            if (grabbedObject !== b) b.position.z -= dir * push;
+                        }
+                    }
                 }
 
                 if (!isPlayerGrabbed) {
-                    // 3Dの重力とジャンプ・箱との衝突処理
+                    // 3Dの重力とジャンプ・障害物との衝突処理
                     let floorY = playerSize / 2; // 基本の床の高さ
-                    const distX = Math.abs(player.position.x - pushBox.position.x);
-                    const distZ = Math.abs(player.position.z - pushBox.position.z);
                     const overlapLimit = playerSize / 2 + boxSize / 2;
 
-                    // 箱との簡易衝突判定（食い込み防止）
-                    if (distX < overlapLimit && distZ < overlapLimit) {
-                        const boxTopY = pushBox.position.y + boxSize / 2;
+                    // 障害物との簡易衝突判定（食い込み防止）
+                    obstacles.forEach((obstacle, i) => {
+                        const distX = Math.abs(player.position.x - obstacle.position.x);
+                        const distZ = Math.abs(player.position.z - obstacle.position.z);
+                        if (distX >= overlapLimit || distZ >= overlapLimit) return;
+
+                        const boxTopY = obstacle.position.y + boxSize / 2;
                         const playerBottomY = player.position.y - playerSize / 2;
                         const nearTop = playerBottomY >= boxTopY - 0.25 && playerBottomY <= boxTopY + 1.2;
 
                         if (nearTop && vy3d <= 0) {
-                            // 箱の上に乗っている
-                            floorY = boxTopY + playerSize / 2;
-                        } else if (!isBoxGrabbed) {
-                            const verticalOverlap = Math.abs(player.position.y - pushBox.position.y) < overlapLimit;
+                            // 障害物の上に乗っている
+                            floorY = Math.max(floorY, boxTopY + playerSize / 2);
+                        } else if (grabbedObject !== obstacle) {
+                            const verticalOverlap = Math.abs(player.position.y - obstacle.position.y) < overlapLimit;
                             if (verticalOverlap) {
-                                // 横から箱を押す
-                                pushBox.position.x += dx;
-                                pushBox.position.z += dz;
+                                // 横から障害物を押す
+                                obstacle.position.x += dx;
+                                obstacle.position.z += dz;
+                                obstacle.position.x = Math.max(-15, Math.min(15, obstacle.position.x));
+                                obstacle.position.z = Math.max(getObjectMinZ(obstacle), Math.min(getObjectMaxZ(obstacle), obstacle.position.z));
 
-                                // 箱が壁（世界の端）を超えないように制限
-                                pushBox.position.x = Math.max(-15, Math.min(15, pushBox.position.x));
-                                pushBox.position.z = Math.max(getObjectMinZ(pushBox), Math.min(getObjectMaxZ(pushBox), pushBox.position.z));
-
-                                // 箱が壁で止まった場合、プレイヤーが食い込むのを防ぐために押し戻す
-                                const finalDistX = Math.abs(player.position.x - pushBox.position.x);
-                                const finalDistZ = Math.abs(player.position.z - pushBox.position.z);
+                                // 障害物が壁で止まった場合、プレイヤーが食い込まないよう押し戻し
+                                const finalDistX = Math.abs(player.position.x - obstacle.position.x);
+                                const finalDistZ = Math.abs(player.position.z - obstacle.position.z);
                                 if (finalDistX < overlapLimit && finalDistZ < overlapLimit) {
                                     const overlapX = overlapLimit - finalDistX;
                                     const overlapZ = overlapLimit - finalDistZ;
                                     if (overlapX < overlapZ) {
-                                        player.position.x += Math.sign(player.position.x - pushBox.position.x) * overlapX;
+                                        player.position.x += Math.sign(player.position.x - obstacle.position.x) * overlapX;
                                     } else {
-                                        player.position.z += Math.sign(player.position.z - pushBox.position.z) * overlapZ;
+                                        player.position.z += Math.sign(player.position.z - obstacle.position.z) * overlapZ;
                                     }
                                 }
+                                obstacleVys[i] = Math.max(0, obstacleVys[i]);
                             }
                         }
-                    }
+                    });
 
                     // ジャンプ
                     if (keys.space && player.position.y <= floorY + 0.01) {
@@ -977,7 +1084,7 @@
                     vy3d += gravity3d * dt;
                     player.position.y += vy3d * dt;
 
-                    // 床（または箱）に着地
+                    // 床（または障害物）に着地
                     if (player.position.y < floorY) {
                         player.position.y = floorY;
                         vy3d = 0;
@@ -989,8 +1096,14 @@
                 // 部屋から出ないように制限
                 player.position.x = Math.max(-15, Math.min(15, player.position.x));
                 player.position.z = Math.max(getObjectMinZ(player), Math.min(getObjectMaxZ(player), player.position.z));
-                pushBox.position.x = Math.max(-15, Math.min(15, pushBox.position.x));
-                pushBox.position.z = Math.max(getObjectMinZ(pushBox), Math.min(getObjectMaxZ(pushBox), pushBox.position.z));
+                obstacles.forEach((obstacle, i) => {
+                    obstacle.position.x = Math.max(-15, Math.min(15, obstacle.position.x));
+                    obstacle.position.z = Math.max(getObjectMinZ(obstacle), Math.min(getObjectMaxZ(obstacle), obstacle.position.z));
+                    if (obstacle.position.y < boxSize / 2) {
+                        obstacle.position.y = boxSize / 2;
+                        obstacleVys[i] = 0;
+                    }
+                });
                 updateProjectionPreview();
 
             } else if (gameState === "2D") {
@@ -1046,10 +1159,10 @@
                 if (Math.abs(p2d.x - goal.position.x) < 1.5 && Math.abs(p2d.y - goal.position.y) < 3) {
                     nextLevel();
                 }
-                boxShadowPreview.visible = false;
+                obstacleShadowPreviews.forEach(preview => preview.visible = false);
                 playerShadowPreview.visible = false;
             } else {
-                boxShadowPreview.visible = false;
+                obstacleShadowPreviews.forEach(preview => preview.visible = false);
                 playerShadowPreview.visible = false;
             }
 
