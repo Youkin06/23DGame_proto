@@ -382,11 +382,12 @@
         const raycaster = new THREE.Raycaster();
         const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
         const floorHitPoint = new THREE.Vector3();
+        const frontLimitZ = 12; // 手前に来すぎない上限
         const worldBounds = {
             minX: -15,
             maxX: 15,
             minZ: screenZ + playerSize / 2 + 0.05,
-            maxZ: 15
+            maxZ: frontLimitZ
         };
         const handDepthRange = { min: 0.05, max: 0.14 };
         let handDepthCalibrated = false;
@@ -477,7 +478,7 @@
         }
 
         function getObjectMaxZ(obj) {
-            return obstacles.includes(obj) ? 14 : worldBounds.maxZ;
+            return obstacles.includes(obj) ? Math.min(14, worldBounds.maxZ) : worldBounds.maxZ;
         }
 
         function releaseGrabbedObject() {
