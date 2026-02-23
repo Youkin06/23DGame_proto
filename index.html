@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shadow Dive Prototype</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
+        canvas { display: block; }
+        #ui {
+            position: absolute; top: 20px; left: 20px; color: white;
+            text-shadow: 2px 2px 0 #000; pointer-events: none;
+        }
+        #webcam-panel {
+            position: absolute;
+            right: 20px;
+            top: 20px;
+            z-index: 5;
+            width: 230px;
+            background: rgba(0, 0, 0, 0.65);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            border-radius: 10px;
+            padding: 10px;
+            color: #fff;
+            font-size: 13px;
+            line-height: 1.4;
+            pointer-events: auto;
+        }
+        #webcam-btn {
+            width: 100%;
+            padding: 8px;
+            border: 0;
+            border-radius: 6px;
+            background: #00acc1;
+            color: #fff;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        #webcam-btn:disabled {
+            opacity: 0.7;
+            cursor: default;
+        }
+        #hand-text {
+            margin-top: 8px;
+            color: #80deea;
+            font-weight: bold;
+            min-height: 18px;
+        }
+        #webcam-video {
+            width: 100%;
+            margin-top: 8px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            transform: scaleX(-1);
+            display: none;
+            background: #111;
+        }
+        #flash {
+            position: absolute; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: white; opacity: 0; pointer-events: none; transition: opacity 0.1s;
+        }
+        .instruction { font-size: 18px; margin-bottom: 5px; }
+        .title { font-size: 24px; font-weight: bold; color: #ffeb3b; margin-bottom: 10px; }
+    </style>
+    <!-- Three.jsを読み込み -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- MediaPipe Hands -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+</head>
+<body>
+    <div id="ui">
+        <div class="title">🎬 影と次元のプロトタイプ</div>
+        <div class="instruction">【3Dモード】 WASD: 移動 / SPACE: ジャンプ / 箱を押す</div>
+        <div class="instruction">【ハンド操作】 ピンチ: 掴む / 手を上げる: 持ち上げる</div>
+        <div class="instruction">【ダイブ】 ENTER: 影を実体化＆映画の中へ</div>
+        <div class="instruction" id="level-text" style="color:#ffeb3b; font-weight:bold; margin-top:10px;">ステージ: 1 / 3</div>
+        <div class="instruction" id="mode-text" style="color:#00e5ff; font-weight:bold;">現在のモード: 3D（現実）</div>
+    </div>
+    <div id="webcam-panel">
+        <button id="webcam-btn">Webカメラ開始</button>
+        <div id="hand-text">ハンド操作: OFF</div>
+        <video id="webcam-video" autoplay playsinline muted></video>
+    </div>
+    <div id="flash"></div>
+
+    <script>
+        // --- 基本設定 ---
+        const scene = new THREE.Scene();
+        // 映画館の暗い雰囲気を出すフォグ
+        scene.fog = new THREE.FogExp2(0x050505, 0.03);
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        document.body.appendChild(renderer.domElement);
+
+        // --- 効果音の合成（Web Audio APIでレトロなガシャン音を作る） ---
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playHitSound() {
+            if(audioCtx.state === 'suspended') audioCtx.resume();
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(40, audioCtx.currentTime + 0.2);
+            gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.3);
+        }
+
+        // --- 照明（映写機） ---
+        const ambientLight = new THREE.AmbientLight(0x222222);
+        scene.add(ambientLight);
+
+        const projectorLight = new THREE.SpotLight(0xffffff, 2);
+        projectorLight.position.set(0, 5, 15);
+        projectorLight.angle = Math.PI / 4;
+        projectorLight.penumbra = 0.2;
+        projectorLight.castShadow = true;
+        projectorLight.shadow.mapSize.width = 2048;
+        projectorLight.shadow.mapSize.height = 2048;
+        scene.add(projectorLight);
+
+        // 映写機のレンズっぽさを出すためのヘルパー光源
+        const lensGlow = new THREE.PointLight(0xffffee, 1, 2);
+        lensGlow.position.copy(projectorLight.position);
+        scene.add(lensGlow);
+
+        // --- マテリアル ---
+        const floorMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+        
+        // 映画のスクリーン用ノイズシェーダーマテリアル
+        const screenMat = new THREE.ShaderMaterial({
+            uniforms: { time: { value: 0.0 } },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform float time;
+                varying vec2 vUv;
+                // 乱数生成
+                float random(vec2 st) {
+                    return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
+                }
+                void main() {
+                    vec2 noiseUv = vUv * vec2(200.0, 200.0) + time * 15.0;
+                    float n = random(noiseUv);
+                    // ベースの色（白っぽいスクリーン）
+                    vec3 color = vec3(0.7) + vec3(n) * 0.15;
+                    // 古いフィルム風の縦スジ
+                    float stripe = sin(vUv.x * 30.0 + time * 10.0) * 0.03;
+                    color -= vec3(stripe);
+                    gl_FragColor = vec4(color, 1.0);
+                }
+            `
+        });
+
+        const boxMat = new THREE.MeshStandardMaterial({ color: 0xff3333 });
+        const playerMat = new THREE.MeshStandardMaterial({ color: 0x3388ff });
+        const solidShadowMat = new THREE.MeshBasicMaterial({ color: 0x000000 }); // 実体化した影は真っ黒
+        const previewShadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35 });
+        const previewPlayerShadowMat = new THREE.MeshBasicMaterial({ color: 0x222222, transparent: true, opacity: 0.3 });
+        const movieLevelMat = new THREE.MeshBasicMaterial({ color: 0x555555 });
+        const goalMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+
+        // --- 空間の構築 ---
+        // 部屋の床
+        const floor = new THREE.Mesh(new THREE.PlaneGeometry(50, 50), floorMat);
+        floor.rotation.x = -Math.PI / 2;
+        floor.receiveShadow = true;
+        scene.add(floor);
+
+        // スクリーン（壁）
+        const screenZ = -10;
+        const screenGeo = new THREE.PlaneGeometry(40, 20);
+        const movieScreen = new THREE.Mesh(screenGeo, screenMat);
+        movieScreen.position.set(0, 10, screenZ);
+        movieScreen.receiveShadow = true;
+        scene.add(movieScreen);
+
+        // --- 3Dオブジェクト ---
+        // プレイヤー (3D)
+        const playerSize = 1;
+        const player = new THREE.Mesh(new THREE.BoxGeometry(playerSize, playerSize, playerSize), playerMat);
+        player.castShadow = true;
+        scene.add(player);
+
+        // 押せる箱 (3D)
+        const boxSize = 2;
+        const pushBox = new THREE.Mesh(new THREE.BoxGeometry(boxSize, boxSize, boxSize), boxMat);
+        pushBox.castShadow = true;
+        scene.add(pushBox);
+        const grabbableObjects = [pushBox, player];
+
+        // ハンドカーソル（床面）
+        const handCursor = new THREE.Mesh(
+            new THREE.RingGeometry(0.35, 0.55, 32),
+            new THREE.MeshBasicMaterial({ color: 0x00e5ff, side: THREE.DoubleSide, transparent: true, opacity: 0.9 })
+        );
+        handCursor.rotation.x = -Math.PI / 2;
+        handCursor.position.y = 0.03;
+        handCursor.visible = false;
+        scene.add(handCursor);
+
+        // --- 映画の中（2Dレベル）の構成要素 ---
+        const movieObjects = new THREE.Group();
+        movieObjects.position.z = screenZ + 0.1; // スクリーンの少し手前に配置
+        scene.add(movieObjects);
+
+        let solidRects = []; // 2Dでの当たり判定用配列
+        let platformsList = []; // 再生成時の削除用
+        const goal = new THREE.Mesh(new THREE.PlaneGeometry(2, 4), goalMat);
+        movieObjects.add(goal);
+        // 3D時にスクリーンへ映るリアルタイム投影プレビュー
+        const boxShadowPreview = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), previewShadowMat);
+        const playerShadowPreview = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), previewPlayerShadowMat);
+        boxShadowPreview.visible = false;
+        playerShadowPreview.visible = false;
+        movieObjects.add(boxShadowPreview);
+        movieObjects.add(playerShadowPreview);
+
+        // --- ステージ（レベル）データ ---
+        const levels = [
+            {
+                // Level 1: 基本のダイブ
+                playerStart: {x: -3, z: 5},
+                boxStart: {x: 2, z: 2},
+                platforms: [
+                    {x: -8, y: 0, w: 10, h: 2},
+                    {x: 8, y: 0, w: 10, h: 2}
+                ],
+                goal: {x: 10, y: 3}
+            },
+            {
+                // Level 2: 影の拡大（光源に箱を近づけると影が大きくなるギミック）
+                playerStart: {x: -5, z: 8},
+                boxStart: {x: 0, z: 5},
+                platforms: [
+                    {x: -12, y: 0, w: 6, h: 2},
+                    {x: 12, y: 0, w: 6, h: 2}
+                ],
+                goal: {x: 13, y: 3}
+            },
+            {
+                // Level 3: 高低差（箱の上に乗ってダイブすると影が高い位置に生成される）
+                playerStart: {x: 0, z: 8},
+                boxStart: {x: 2, z: 4},
+                platforms: [
+                    {x: -10, y: -2, w: 6, h: 2},
+                    {x: 0, y: -5, w: 4, h: 2}, // 低い中間足場（落ちた時の復帰用）
+                    {x: 10, y: 5, w: 6, h: 2}  // 高い位置にあるゴール
+                ],
+                goal: {x: 11, y: 8}
+            }
+        ];
+
+        let currentLevel = 0;
+        let solidShadowMesh = null; // 実体化した影のメッシュ
+
+        // --- ステージのセットアップ ---
+        function setupLevel(index) {
+            const lvl = levels[index];
+
+            // キャラと箱の初期化
+            player.position.set(lvl.playerStart.x, playerSize/2, lvl.playerStart.z);
+            pushBox.position.set(lvl.boxStart.x, boxSize/2, lvl.boxStart.z);
+
+            // 既存の2D地形を削除
+            platformsList.forEach(p => movieObjects.remove(p));
+            platformsList = [];
+            solidRects = [];
+
+            if(solidShadowMesh) {
+                movieObjects.remove(solidShadowMesh);
+                solidShadowMesh = null;
+            }
+
+            // 新しい地形を生成
+            lvl.platforms.forEach(plat => {
+                const mesh = new THREE.Mesh(new THREE.PlaneGeometry(plat.w, plat.h), movieLevelMat);
+                mesh.position.set(plat.x, plat.y, 0);
+                movieObjects.add(mesh);
+                platformsList.push(mesh);
+                solidRects.push(plat);
+            });
+
+            // ゴールを配置
+            goal.position.set(lvl.goal.x, lvl.goal.y, 0);
+            
+            // UI更新
+            const lvlText = document.getElementById('level-text');
+            if (lvlText) lvlText.innerText = `ステージ: ${index + 1} / ${levels.length}`;
+        }
+
+        // 初期レベルをロード
+        setupLevel(currentLevel);
+
+        // --- ゲームの状態 ---
+        let gameState = "3D"; // "3D", "TRANSITION", "2D"
+        const keys = { w:false, a:false, s:false, d:false, space:false, enter:false };
+
+        // 3Dプレイヤーの物理変数
+        let vy3d = 0;
+        let vyBox = 0;
+        const gravity3d = -30;
+        const jumpForce3d = 12;
+
+        // 2Dプレイヤーの物理変数
+        let p2d = { x: 0, y: 0, vx: 0, vy: 0, w: playerSize*2, h: playerSize*2, isGrounded: false };
+
+        // カメラの初期位置
+        camera.position.set(0, 8, 20);
+        camera.lookAt(0, 5, 0);
+
+        // カメラシェイク用
+        let shakeTime = 0;
+
+        // --- Webカメラ手操作 ---
+        const webcamBtn = document.getElementById('webcam-btn');
+        const handText = document.getElementById('hand-text');
+        const webcamVideo = document.getElementById('webcam-video');
+        let handsTracker = null;
+        let webcamController = null;
+        let handEnabled = false;
+        let statusCache = "";
+        const handState = { detected: false, x: 0.5, y: 0.5, pinch: false };
+        let prevPinch = false;
+        let grabbedObject = null;
+        const grabOffset = new THREE.Vector3();
+        const raycaster = new THREE.Raycaster();
+        const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+        const floorHitPoint = new THREE.Vector3();
+        const worldBounds = { minX: -15, maxX: 15, minZ: -5, maxZ: 15 };
+
+        function setHandStatus(text, color = "#80deea") {
+            if (statusCache === text && handText.style.color === color) return;
+            statusCache = text;
+            handText.textContent = text;
+            handText.style.color = color;
+        }
+
+        function getGrabHalfSize(obj) {
+            return obj === pushBox ? boxSize / 2 : playerSize / 2;
+        }
+
+        function releaseGrabbedObject() {
+            if (!grabbedObject) return;
+            grabbedObject = null;
+            prevPinch = false;
+            setHandStatus(handState.detected ? "ハンド操作: ピンチで掴む" : "ハンド操作: 手を検出中...", "#80deea");
+        }
+
+        function getHandPointOnFloor() {
+            const ndc = new THREE.Vector2(handState.x * 2 - 1, -(handState.y * 2 - 1));
+            raycaster.setFromCamera(ndc, camera);
+            const hit = raycaster.ray.intersectPlane(floorPlane, floorHitPoint);
+            if (!hit) return null;
+            return floorHitPoint.clone();
+        }
+
+        function pickGrabbable(cursorPoint) {
+            let nearest = null;
+            let nearestDist = Infinity;
+            for (const obj of grabbableObjects) {
+                const dist = Math.hypot(obj.position.x - cursorPoint.x, obj.position.z - cursorPoint.z);
+                const reach = obj === pushBox ? 2.3 : 1.8;
+                if (dist < reach && dist < nearestDist) {
+                    nearest = obj;
+                    nearestDist = dist;
+                }
+            }
+            return nearest;
+        }
+
+        function beginGrab(targetObj, cursorPoint) {
+            grabbedObject = targetObj;
+            grabOffset.set(
+                targetObj.position.x - cursorPoint.x,
+                0,
+                targetObj.position.z - cursorPoint.z
+            );
+            if (targetObj === player) vy3d = 0;
+            if (targetObj === pushBox) vyBox = 0;
+            const label = targetObj === pushBox ? "箱" : "プレイヤー";
+            setHandStatus(`ハンド操作: ${label}を掴み中`, "#b2ff59");
+        }
+
+        function updateGrabbedObjectByHand() {
+            if (!grabbedObject) return;
+            const cursorPoint = getHandPointOnFloor();
+            if (!cursorPoint) return;
+
+            const half = getGrabHalfSize(grabbedObject);
+            const maxZ = grabbedObject === pushBox ? 14 : worldBounds.maxZ;
+            const tx = THREE.MathUtils.clamp(cursorPoint.x + grabOffset.x, worldBounds.minX + half, worldBounds.maxX - half);
+            const tz = THREE.MathUtils.clamp(cursorPoint.z + grabOffset.z, worldBounds.minZ + half, maxZ - half);
+            const ty = THREE.MathUtils.clamp(half + (1 - handState.y) * 7.5, half, 9);
+
+            grabbedObject.position.x = THREE.MathUtils.lerp(grabbedObject.position.x, tx, 0.35);
+            grabbedObject.position.z = THREE.MathUtils.lerp(grabbedObject.position.z, tz, 0.35);
+            grabbedObject.position.y = THREE.MathUtils.lerp(grabbedObject.position.y, ty, 0.35);
+
+            if (grabbedObject === pushBox) vyBox = 0;
+            if (grabbedObject === player) vy3d = 0;
+        }
+
+        function updateHandInteraction() {
+            if (!handEnabled || gameState !== "3D") {
+                handCursor.visible = false;
+                if (grabbedObject) releaseGrabbedObject();
+                prevPinch = false;
+                return;
+            }
+
+            if (!handState.detected) {
+                handCursor.visible = false;
+                if (grabbedObject) releaseGrabbedObject();
+                setHandStatus("ハンド操作: 手を検出中...", "#80deea");
+                prevPinch = false;
+                return;
+            }
+
+            const cursorPoint = getHandPointOnFloor();
+            if (cursorPoint) {
+                handCursor.visible = true;
+                handCursor.position.set(
+                    THREE.MathUtils.clamp(cursorPoint.x, worldBounds.minX, worldBounds.maxX),
+                    0.03,
+                    THREE.MathUtils.clamp(cursorPoint.z, worldBounds.minZ, worldBounds.maxZ)
+                );
+                handCursor.material.color.set(handState.pinch ? 0xffeb3b : 0x00e5ff);
+            } else {
+                handCursor.visible = false;
+            }
+
+            const pinchStarted = handState.pinch && !prevPinch;
+            const pinchEnded = !handState.pinch && prevPinch;
+            prevPinch = handState.pinch;
+
+            if (pinchStarted && cursorPoint && !grabbedObject) {
+                const targetObj = pickGrabbable(cursorPoint);
+                if (targetObj) beginGrab(targetObj, cursorPoint);
+            }
+            if (grabbedObject && handState.pinch) {
+                updateGrabbedObjectByHand();
+            }
+            if (pinchEnded) {
+                releaseGrabbedObject();
+            }
+        }
+
+        function onHandResults(results) {
+            const hasHand = results.multiHandLandmarks && results.multiHandLandmarks.length > 0;
+            if (!hasHand) {
+                handState.detected = false;
+                handState.pinch = false;
+                return;
+            }
+
+            const landmarks = results.multiHandLandmarks[0];
+            const indexTip = landmarks[8];
+            const thumbTip = landmarks[4];
+
+            handState.detected = true;
+            handState.x = THREE.MathUtils.lerp(handState.x, indexTip.x, 0.55);
+            handState.y = THREE.MathUtils.lerp(handState.y, indexTip.y, 0.55);
+
+            const pinchDistance = Math.hypot(
+                indexTip.x - thumbTip.x,
+                indexTip.y - thumbTip.y,
+                indexTip.z - thumbTip.z
+            );
+            const pinchOnThreshold = 0.05;
+            const pinchOffThreshold = 0.075;
+            if (handState.pinch) handState.pinch = pinchDistance < pinchOffThreshold;
+            else handState.pinch = pinchDistance < pinchOnThreshold;
+        }
+
+        async function startHandTracking() {
+            if (handEnabled) return;
+            if (!window.Hands || !window.Camera) {
+                setHandStatus("ハンド操作: ライブラリ読込に失敗", "#ff8a80");
+                return;
+            }
+
+            webcamBtn.disabled = true;
+            webcamBtn.textContent = "起動中...";
+            setHandStatus("ハンド操作: カメラ起動中...", "#80deea");
+
+            try {
+                handsTracker = new Hands({
+                    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+                });
+                handsTracker.setOptions({
+                    maxNumHands: 1,
+                    modelComplexity: 1,
+                    minDetectionConfidence: 0.65,
+                    minTrackingConfidence: 0.6,
+                    selfieMode: true
+                });
+                handsTracker.onResults(onHandResults);
+
+                webcamController = new Camera(webcamVideo, {
+                    onFrame: async () => {
+                        if (handsTracker) await handsTracker.send({ image: webcamVideo });
+                    },
+                    width: 640,
+                    height: 480
+                });
+
+                await webcamController.start();
+                webcamVideo.style.display = "block";
+                handEnabled = true;
+                webcamBtn.textContent = "Webカメラ起動済み";
+                setHandStatus("ハンド操作: ピンチで掴む", "#b2ff59");
+            } catch (err) {
+                console.error("Hand tracking start failed:", err);
+                webcamBtn.disabled = false;
+                webcamBtn.textContent = "Webカメラ開始";
+                setHandStatus("ハンド操作: カメラ許可が必要", "#ff8a80");
+            }
+        }
+
+        webcamBtn.addEventListener('click', startHandTracking);
+
+        // --- 入力処理 ---
+        window.addEventListener('keydown', (e) => {
+            if(e.key.toLowerCase() === 'w') keys.w = true;
+            if(e.key.toLowerCase() === 'a') keys.a = true;
+            if(e.key.toLowerCase() === 's') keys.s = true;
+            if(e.key.toLowerCase() === 'd') keys.d = true;
+            if(e.code === 'Space') keys.space = true;
+            if(e.code === 'Enter') {
+                if(!keys.enter && gameState === "3D") tryDive();
+                keys.enter = true;
+            }
+        });
+        window.addEventListener('keyup', (e) => {
+            if(e.key.toLowerCase() === 'w') keys.w = false;
+            if(e.key.toLowerCase() === 'a') keys.a = false;
+            if(e.key.toLowerCase() === 's') keys.s = false;
+            if(e.key.toLowerCase() === 'd') keys.d = false;
+            if(e.code === 'Space') keys.space = false;
+            if(e.code === 'Enter') keys.enter = false;
+        });
+
+        // --- 投影計算（光の位置からスクリーンへの射影） ---
+        function getProjectedRect(obj3D, width3D, height3D) {
+            const lightZ = projectorLight.position.z;
+            const objZ = obj3D.position.z;
+            const planeZ = screenZ;
+            const denominator = objZ - lightZ;
+            // 光源と同じ奥行きに近い時は投影が極端になるため無効扱い
+            if (Math.abs(denominator) < 0.001) return null;
+            
+            // 相似比による投影サイズの計算
+            const scale = (planeZ - lightZ) / denominator;
+            if (scale <= 0) return null;
+            
+            // 中心の投影位置
+            const px = projectorLight.position.x + (obj3D.position.x - projectorLight.position.x) * scale;
+            const py = projectorLight.position.y + (obj3D.position.y - projectorLight.position.y) * scale;
+            
+            return {
+                x: px, y: py,
+                w: width3D * scale,
+                h: height3D * scale
+            };
+        }
+
+        function updateProjectionPreview() {
+            const projectedBox = getProjectedRect(pushBox, boxSize, boxSize);
+            const projectedPlayer = getProjectedRect(player, playerSize, playerSize);
+
+            if (projectedBox) {
+                boxShadowPreview.visible = true;
+                boxShadowPreview.scale.set(projectedBox.w, projectedBox.h, 1);
+                boxShadowPreview.position.set(projectedBox.x, projectedBox.y, 0);
+            } else {
+                boxShadowPreview.visible = false;
+            }
+
+            if (projectedPlayer) {
+                playerShadowPreview.visible = true;
+                playerShadowPreview.scale.set(projectedPlayer.w, projectedPlayer.h, 1);
+                playerShadowPreview.position.set(projectedPlayer.x, projectedPlayer.y, 0);
+            } else {
+                playerShadowPreview.visible = false;
+            }
+        }
+
+        // --- ダイブ処理（気持ちよさのコア） ---
+        function tryDive() {
+            if (grabbedObject) return;
+            // プレイヤーがスクリーンに映る範囲にいるかチェック（簡易的）
+            if (player.position.z < screenZ || player.position.z > projectorLight.position.z) return;
+
+            gameState = "TRANSITION";
+            playHitSound();
+            shakeTime = 0.3; // 画面揺れ
+
+            // 画面をピカッと光らせる演出
+            const flash = document.getElementById('flash');
+            flash.style.backgroundColor = 'white';
+            flash.style.opacity = '1';
+            setTimeout(() => { flash.style.opacity = '0'; }, 50);
+
+            // 1. 箱の影を計算し、2D空間に実体化させる
+            const shadowRect = getProjectedRect(pushBox, boxSize, boxSize);
+            const pRect = getProjectedRect(player, playerSize, playerSize);
+            if (!shadowRect || !pRect) return;
+            
+            // 既存の影があれば消す
+            if(solidShadowMesh) {
+                movieObjects.remove(solidShadowMesh);
+                solidRects.pop(); // 最後の要素（影）を削除
+            }
+
+            // 実体化した影（真っ黒なブロック）をスクリーンに生成
+            solidShadowMesh = new THREE.Mesh(new THREE.PlaneGeometry(shadowRect.w, shadowRect.h), solidShadowMat);
+            solidShadowMesh.position.set(shadowRect.x, shadowRect.y, 0);
+            movieObjects.add(solidShadowMesh);
+            solidRects.push(shadowRect);
+            p2d.x = pRect.x;
+            p2d.y = pRect.y;
+            p2d.w = pRect.w;
+            p2d.h = pRect.h;
+            p2d.vx = 0;
+            p2d.vy = 0;
+
+            // プレイヤーをペラペラにしてスクリーンに張り付ける
+            player.scale.set(pRect.w, pRect.h, 0.1);
+            player.position.set(pRect.x, pRect.y, screenZ + 0.2);
+            player.castShadow = false; // 2Dモード時は影を落とさない
+            boxShadowPreview.visible = false;
+            playerShadowPreview.visible = false;
+
+            document.getElementById('mode-text').innerText = "現在のモード: 2D（映画の中）";
+            document.getElementById('mode-text').style.color = "#ff0055";
+
+            // カメラを2Dゲーム視点へアニメーション移動
+            let t = 0;
+            const startCamPos = camera.position.clone();
+            const targetCamPos = new THREE.Vector3(0, 10, screenZ + 25);
+            const startLookAt = new THREE.Vector3(0, 5, 0);
+            const targetLookAt = new THREE.Vector3(0, 10, screenZ);
+            
+            function animateTransition() {
+                t += 0.05;
+                if(t >= 1) {
+                    camera.position.copy(targetCamPos);
+                    camera.lookAt(targetLookAt);
+                    gameState = "2D";
+                    return;
+                }
+                // イージング
+                const easeOut = 1 - Math.pow(1 - t, 3);
+                camera.position.lerpVectors(startCamPos, targetCamPos, easeOut);
+                const currentLookAt = new THREE.Vector3().lerpVectors(startLookAt, targetLookAt, easeOut);
+                camera.lookAt(currentLookAt);
+                requestAnimationFrame(animateTransition);
+            }
+            animateTransition();
+        }
+
+        // --- 現実（3D）に弾き出される処理（ペナルティ） ---
+        function damageReturn() {
+            gameState = "TRANSITION";
+            releaseGrabbedObject();
+            playHitSound();
+            shakeTime = 0.4;
+
+            // ダメージ演出（赤いフラッシュ）
+            const flash = document.getElementById('flash');
+            flash.style.backgroundColor = '#ff0000';
+            flash.style.opacity = '0.6';
+            setTimeout(() => { 
+                flash.style.opacity = '0'; 
+                setTimeout(() => { flash.style.backgroundColor = 'white'; }, 150);
+            }, 50);
+
+            if(solidShadowMesh) {
+                movieObjects.remove(solidShadowMesh);
+                solidRects.pop();
+                solidShadowMesh = null;
+            }
+
+            player.scale.set(1, 1, 1);
+            player.castShadow = true;
+            player.position.set(0, playerSize/2, 5); // 弾き出される位置
+            vy3d = 0;
+            vyBox = 0;
+            handCursor.visible = false;
+
+            transitionCameraTo3D();
+        }
+
+        // --- ステージクリアして次のレベルへ進む処理 ---
+        function nextLevel() {
+            gameState = "TRANSITION";
+            releaseGrabbedObject();
+            
+            // クリア演出（白く光る）
+            const flash = document.getElementById('flash');
+            flash.style.backgroundColor = '#ffffff';
+            flash.style.opacity = '1';
+            setTimeout(() => { 
+                flash.style.opacity = '0'; 
+            }, 500);
+
+            currentLevel++;
+            if (currentLevel >= levels.length) {
+                currentLevel = 0; 
+                setTimeout(() => alert("🎉 全ステージクリア！おめでとうございます！ 🎉"), 100);
+            }
+            
+            // 次のレベルのセットアップ
+            setupLevel(currentLevel);
+
+            player.scale.set(1, 1, 1);
+            player.castShadow = true;
+            vy3d = 0;
+            vyBox = 0;
+            handCursor.visible = false;
+            
+            transitionCameraTo3D();
+        }
+
+        // --- カメラを3D視点に戻す共通アニメーション ---
+        function transitionCameraTo3D() {
+            document.getElementById('mode-text').innerText = "現在のモード: 3D（現実）";
+            document.getElementById('mode-text').style.color = "#00e5ff";
+
+            let t = 0;
+            const startCamPos = camera.position.clone();
+            const targetCamPos = new THREE.Vector3(0, 8, 20);
+            const startLookAt = new THREE.Vector3(0, 10, screenZ);
+            const targetLookAt = new THREE.Vector3(0, 5, 0);
+            
+            function animateReturn() {
+                t += 0.05;
+                if(t >= 1) {
+                    camera.position.copy(targetCamPos);
+                    camera.lookAt(targetLookAt);
+                    gameState = "3D";
+                    updateProjectionPreview();
+                    return;
+                }
+                const easeOut = 1 - Math.pow(1 - t, 3);
+                camera.position.lerpVectors(startCamPos, targetCamPos, easeOut);
+                const currentLookAt = new THREE.Vector3().lerpVectors(startLookAt, targetLookAt, easeOut);
+                camera.lookAt(currentLookAt);
+                requestAnimationFrame(animateReturn);
+            }
+            animateReturn();
+        }
+
+        // --- 簡易2D当たり判定（AABB） ---
+        function checkCollision2D(x, y, w, h) {
+            for(let rect of solidRects) {
+                if (x - w/2 < rect.x + rect.w/2 &&
+                    x + w/2 > rect.x - rect.w/2 &&
+                    y - h/2 < rect.y + rect.h/2 &&
+                    y + h/2 > rect.y - rect.h/2) {
+                    return rect; // 当たった矩形を返す
+                }
+            }
+            return null;
+        }
+
+        // --- メインループ ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const dt = clock.getDelta();
+
+            // スクリーンのノイズ時間を更新
+            screenMat.uniforms.time.value += dt;
+
+            // 映写機のチカチカ演出（壊れた映画館っぽさ）
+            projectorLight.intensity = 2 + Math.random() * 0.2;
+            updateHandInteraction();
+
+            if (gameState === "3D") {
+                // 3Dモードのプレイヤー移動
+                const speed = 5 * dt;
+                let dx = 0, dz = 0;
+                if(keys.w) dz -= speed;
+                if(keys.s) dz += speed;
+                if(keys.a) dx -= speed;
+                if(keys.d) dx += speed;
+
+                const isPlayerGrabbed = grabbedObject === player;
+                const isBoxGrabbed = grabbedObject === pushBox;
+
+                if (!isPlayerGrabbed) {
+                    player.position.x += dx;
+                    player.position.z += dz;
+                }
+
+                if (!isBoxGrabbed) {
+                    vyBox += gravity3d * dt;
+                    pushBox.position.y += vyBox * dt;
+                    if (pushBox.position.y < boxSize / 2) {
+                        pushBox.position.y = boxSize / 2;
+                        vyBox = 0;
+                    }
+                } else {
+                    vyBox = 0;
+                }
+
+                if (!isPlayerGrabbed) {
+                    // 3Dの重力とジャンプ・箱との衝突処理
+                    let floorY = playerSize / 2; // 基本の床の高さ
+                    const distX = Math.abs(player.position.x - pushBox.position.x);
+                    const distZ = Math.abs(player.position.z - pushBox.position.z);
+                    const overlapLimit = playerSize / 2 + boxSize / 2;
+
+                    // 箱との簡易衝突判定（食い込み防止）
+                    if (distX < overlapLimit && distZ < overlapLimit) {
+                        const boxTopY = pushBox.position.y + boxSize / 2;
+                        const playerBottomY = player.position.y - playerSize / 2;
+                        const nearTop = playerBottomY >= boxTopY - 0.25 && playerBottomY <= boxTopY + 1.2;
+
+                        if (nearTop && vy3d <= 0) {
+                            // 箱の上に乗っている
+                            floorY = boxTopY + playerSize / 2;
+                        } else if (!isBoxGrabbed) {
+                            const verticalOverlap = Math.abs(player.position.y - pushBox.position.y) < overlapLimit;
+                            if (verticalOverlap) {
+                                // 横から箱を押す
+                                pushBox.position.x += dx;
+                                pushBox.position.z += dz;
+
+                                // 箱が壁（世界の端）を超えないように制限
+                                pushBox.position.x = Math.max(-15, Math.min(15, pushBox.position.x));
+                                pushBox.position.z = Math.max(-5, Math.min(14, pushBox.position.z));
+
+                                // 箱が壁で止まった場合、プレイヤーが食い込むのを防ぐために押し戻す
+                                const finalDistX = Math.abs(player.position.x - pushBox.position.x);
+                                const finalDistZ = Math.abs(player.position.z - pushBox.position.z);
+                                if (finalDistX < overlapLimit && finalDistZ < overlapLimit) {
+                                    const overlapX = overlapLimit - finalDistX;
+                                    const overlapZ = overlapLimit - finalDistZ;
+                                    if (overlapX < overlapZ) {
+                                        player.position.x += Math.sign(player.position.x - pushBox.position.x) * overlapX;
+                                    } else {
+                                        player.position.z += Math.sign(player.position.z - pushBox.position.z) * overlapZ;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ジャンプ
+                    if (keys.space && player.position.y <= floorY + 0.01) {
+                        vy3d = jumpForce3d;
+                    }
+                    
+                    // 重力適用
+                    vy3d += gravity3d * dt;
+                    player.position.y += vy3d * dt;
+
+                    // 床（または箱）に着地
+                    if (player.position.y < floorY) {
+                        player.position.y = floorY;
+                        vy3d = 0;
+                    }
+                } else {
+                    vy3d = 0;
+                }
+
+                // 部屋から出ないように制限
+                player.position.x = Math.max(-15, Math.min(15, player.position.x));
+                player.position.z = Math.max(-5, Math.min(15, player.position.z));
+                pushBox.position.x = Math.max(-15, Math.min(15, pushBox.position.x));
+                pushBox.position.z = Math.max(-5, Math.min(14, pushBox.position.z));
+                updateProjectionPreview();
+
+            } else if (gameState === "2D") {
+                // 2Dモード（映画の中）のアクション処理
+                const moveSpeed = 8;
+                const gravity = -25;
+                const jumpForce = 12;
+
+                // 左右移動
+                if(keys.a) p2d.vx = -moveSpeed;
+                else if(keys.d) p2d.vx = moveSpeed;
+                else p2d.vx = 0;
+
+                // X軸の移動と衝突
+                p2d.x += p2d.vx * dt;
+                let colX = checkCollision2D(p2d.x, p2d.y, p2d.w, p2d.h);
+                if(colX) {
+                    if(p2d.vx > 0) p2d.x = colX.x - colX.w/2 - p2d.w/2;
+                    else if(p2d.vx < 0) p2d.x = colX.x + colX.w/2 + p2d.w/2;
+                }
+
+                // ジャンプと重力 (Wキー または SPACEキーでジャンプ)
+                if((keys.w || keys.space) && p2d.isGrounded) {
+                    p2d.vy = jumpForce;
+                    p2d.isGrounded = false;
+                }
+                p2d.vy += gravity * dt;
+                
+                // Y軸の移動と衝突
+                p2d.y += p2d.vy * dt;
+                p2d.isGrounded = false;
+                let colY = checkCollision2D(p2d.x, p2d.y, p2d.w, p2d.h);
+                if(colY) {
+                    if(p2d.vy < 0) { // 落下中（床に着地）
+                        p2d.y = colY.y + colY.h/2 + p2d.h/2;
+                        p2d.isGrounded = true;
+                    } else if(p2d.vy > 0) { // 天井に衝突
+                        p2d.y = colY.y - colY.h/2 - p2d.h/2;
+                    }
+                    p2d.vy = 0;
+                }
+
+                // 下に落ちすぎたら3Dに戻される（ペナルティ）
+                if(p2d.y < -12) {
+                    damageReturn();
+                }
+
+                // メッシュに位置を反映
+                player.position.x = p2d.x;
+                player.position.y = p2d.y;
+
+                // ゴール判定（緑のブロック）
+                if (Math.abs(p2d.x - goal.position.x) < 1.5 && Math.abs(p2d.y - goal.position.y) < 3) {
+                    nextLevel();
+                }
+                boxShadowPreview.visible = false;
+                playerShadowPreview.visible = false;
+            } else {
+                boxShadowPreview.visible = false;
+                playerShadowPreview.visible = false;
+            }
+
+            // カメラシェイク処理（気持ちよさ演出）
+            if (shakeTime > 0) {
+                shakeTime -= dt;
+                const shakeIntensity = 0.5 * (shakeTime / 0.3);
+                camera.position.x += (Math.random() - 0.5) * shakeIntensity;
+                camera.position.y += (Math.random() - 0.5) * shakeIntensity;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // リサイズ対応
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // アニメーション開始
+        animate();
+    </script>
+</body>
+</html>
