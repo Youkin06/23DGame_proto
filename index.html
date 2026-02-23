@@ -187,6 +187,12 @@
         movieScreen.position.set(0, 10, screenZ);
         movieScreen.receiveShadow = true;
         scene.add(movieScreen);
+        const screenBounds = {
+            left: -20,
+            right: 20,
+            bottom: 0,
+            top: 20
+        };
 
         // --- 3Dオブジェクト ---
         // プレイヤー (3D)
@@ -732,12 +738,33 @@
             };
         }
 
+        function clipRectToScreen(rect) {
+            if (!rect) return null;
+            const left = rect.x - rect.w / 2;
+            const right = rect.x + rect.w / 2;
+            const bottom = rect.y - rect.h / 2;
+            const top = rect.y + rect.h / 2;
+
+            const clippedLeft = Math.max(left, screenBounds.left);
+            const clippedRight = Math.min(right, screenBounds.right);
+            const clippedBottom = Math.max(bottom, screenBounds.bottom);
+            const clippedTop = Math.min(top, screenBounds.top);
+
+            if (clippedLeft >= clippedRight || clippedBottom >= clippedTop) return null;
+            return {
+                x: (clippedLeft + clippedRight) / 2,
+                y: (clippedBottom + clippedTop) / 2,
+                w: clippedRight - clippedLeft,
+                h: clippedTop - clippedBottom
+            };
+        }
+
         function updateProjectionPreview() {
-            const projectedPlayer = getProjectedRect(player, playerSize, playerSize);
+            const projectedPlayer = clipRectToScreen(getProjectedRect(player, playerSize, playerSize));
 
             obstacles.forEach((obstacle, i) => {
                 const preview = obstacleShadowPreviews[i];
-                const projectedObstacle = getProjectedRect(obstacle, boxSize, boxSize);
+                const projectedObstacle = clipRectToScreen(getProjectedRect(obstacle, boxSize, boxSize));
                 if (projectedObstacle) {
                     preview.visible = true;
                     preview.scale.set(projectedObstacle.w, projectedObstacle.h, 1);
@@ -763,9 +790,9 @@
             if (player.position.z < screenZ || player.position.z > projectorLight.position.z) return;
 
             const shadowRects = obstacles
-                .map(obstacle => getProjectedRect(obstacle, boxSize, boxSize))
+                .map(obstacle => clipRectToScreen(getProjectedRect(obstacle, boxSize, boxSize)))
                 .filter(Boolean);
-            const pRect = getProjectedRect(player, playerSize, playerSize);
+            const pRect = clipRectToScreen(getProjectedRect(player, playerSize, playerSize));
             if (shadowRects.length === 0 || !pRect) return;
 
             gameState = "TRANSITION";
@@ -932,6 +959,16 @@
                 }
             }
             return null;
+        }
+
+        const projectedPlayerPos = new THREE.Vector3();
+        function isPlayerOutOfScreenIn2D() {
+            projectedPlayerPos.copy(player.position).project(camera);
+            const margin = 1.08; // 少しだけ余裕を持たせて、完全に画面外で判定
+            return (
+                projectedPlayerPos.x < -margin || projectedPlayerPos.x > margin ||
+                projectedPlayerPos.y < -margin || projectedPlayerPos.y > margin
+            );
         }
 
         // --- メインループ ---
@@ -1154,17 +1191,17 @@
                     p2d.vy = 0;
                 }
 
-                // 下に落ちすぎたら3Dに戻される（ペナルティ）
-                if(p2d.y < -12) {
-                    damageReturn();
-                }
-
                 // メッシュに位置を反映
                 player.position.x = p2d.x;
                 player.position.y = p2d.y;
 
+                // 画面外に出たら3Dに戻される（ペナルティ）
+                if (isPlayerOutOfScreenIn2D()) {
+                    damageReturn();
+                }
+
                 // ゴール判定（緑のブロック）
-                if (Math.abs(p2d.x - goal.position.x) < 1.5 && Math.abs(p2d.y - goal.position.y) < 3) {
+                if (gameState === "2D" && Math.abs(p2d.x - goal.position.x) < 1.5 && Math.abs(p2d.y - goal.position.y) < 3) {
                     nextLevel();
                 }
                 obstacleShadowPreviews.forEach(preview => preview.visible = false);
