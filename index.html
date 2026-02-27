@@ -72,8 +72,7 @@
         <div id="ui">
             <div class="title">🎬 影と次元のプロトタイプ</div>
             <div class="instruction">【3Dモード】 WASD: 移動 / SPACE: ジャンプ / 障害物を押す</div>
-            <div class="instruction">【光源操作】 ←→: 向き / ↑↓: 高さ / 手で掴んで移動</div>
-        <div class="instruction">【ハンド操作】 ピンチ: 掴む / 前後: 奥手前 / 上下: 持ち上げる</div>
+            <div class="instruction">【ハンド操作】 ピンチ: 掴む / 前後: 奥手前 / 上下: 持ち上げる</div>
             <div class="instruction">【ダイブ】 ENTER: 影を実体化＆映画の中へ</div>
             <div class="instruction" id="level-text" style="color:#ffeb3b; font-weight:bold; margin-top:10px;">ステージ: 1 / 3</div>
             <div class="instruction" id="mode-text" style="color:#00e5ff; font-weight:bold;">現在のモード: 3D（現実）</div>
@@ -127,34 +126,11 @@
         projectorLight.shadow.mapSize.width = 2048;
         projectorLight.shadow.mapSize.height = 2048;
         scene.add(projectorLight);
-        const projectorTarget = new THREE.Object3D();
-        scene.add(projectorTarget);
-        projectorLight.target = projectorTarget;
 
         // 映写機のレンズっぽさを出すためのヘルパー光源
         const lensGlow = new THREE.PointLight(0xffffee, 1, 2);
         lensGlow.position.copy(projectorLight.position);
         scene.add(lensGlow);
-        const projectorHandle = new THREE.Mesh(
-            new THREE.SphereGeometry(0.45, 24, 24),
-            new THREE.MeshStandardMaterial({ color: 0xfff176, emissive: 0x7a6a10, roughness: 0.35, metalness: 0.1 })
-        );
-        projectorHandle.position.copy(projectorLight.position);
-        projectorHandle.castShadow = true;
-        scene.add(projectorHandle);
-        let lightYaw = 0;
-
-        function updateLightDirection() {
-            const directionDistance = 18;
-            projectorTarget.position.set(
-                projectorLight.position.x + Math.sin(lightYaw) * directionDistance,
-                8,
-                projectorLight.position.z - Math.cos(lightYaw) * directionDistance
-            );
-            lensGlow.position.copy(projectorLight.position);
-            projectorHandle.position.copy(projectorLight.position);
-        }
-        updateLightDirection();
 
         // --- マテリアル ---
         const floorMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
@@ -196,8 +172,6 @@
         const previewPlayerShadowMat = new THREE.MeshBasicMaterial({ color: 0x222222, transparent: true, opacity: 0.3 });
         const movieLevelMat = new THREE.MeshBasicMaterial({ color: 0x555555 });
         const goalMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
-        const swingFrameMat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.7 });
-        const swingSeatMat = new THREE.MeshStandardMaterial({ color: 0x4e342e, roughness: 0.8 });
 
         // --- 空間の構築 ---
         // 部屋の床
@@ -229,7 +203,7 @@
 
         // 押せる障害物 (3D)
         const boxSize = 2;
-        const obstacleCount = 3;
+        const obstacleCount = 1;
         const obstacles = [];
         for (let i = 0; i < obstacleCount; i++) {
             const obstacle = new THREE.Mesh(new THREE.BoxGeometry(boxSize, boxSize, boxSize), boxMat);
@@ -237,7 +211,7 @@
             scene.add(obstacle);
             obstacles.push(obstacle);
         }
-        const grabbableObjects = [...obstacles, player, projectorHandle];
+        const grabbableObjects = [...obstacles, player];
 
         // ハンドカーソル（床面）
         const handCursor = new THREE.Mesh(
@@ -248,47 +222,6 @@
         handCursor.position.y = 0.03;
         handCursor.visible = false;
         scene.add(handCursor);
-
-        // 常に左右へ揺れるブランコ
-        const swingBase = new THREE.Group();
-        swingBase.position.set(-8, 0, 6);
-        scene.add(swingBase);
-
-        const swingTopBar = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.22, 0.22), swingFrameMat);
-        swingTopBar.position.set(0, 7.2, 0);
-        swingTopBar.castShadow = true;
-        swingBase.add(swingTopBar);
-
-        const swingLeftLeg = new THREE.Mesh(new THREE.BoxGeometry(0.22, 7, 0.22), swingFrameMat);
-        swingLeftLeg.position.set(-1.9, 3.5, 0);
-        swingLeftLeg.castShadow = true;
-        swingBase.add(swingLeftLeg);
-
-        const swingRightLeg = new THREE.Mesh(new THREE.BoxGeometry(0.22, 7, 0.22), swingFrameMat);
-        swingRightLeg.position.set(1.9, 3.5, 0);
-        swingRightLeg.castShadow = true;
-        swingBase.add(swingRightLeg);
-
-        const swingPivot = new THREE.Group();
-        swingPivot.position.set(0, 7.1, 0);
-        swingBase.add(swingPivot);
-
-        const leftRope = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 3.2, 8), swingFrameMat);
-        leftRope.position.set(-0.6, -1.6, 0);
-        leftRope.castShadow = true;
-        swingPivot.add(leftRope);
-
-        const rightRope = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 3.2, 8), swingFrameMat);
-        rightRope.position.set(0.6, -1.6, 0);
-        rightRope.castShadow = true;
-        swingPivot.add(rightRope);
-
-        const swingSeat = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.2, 0.55), swingSeatMat);
-        swingSeat.position.set(0, -3.2, 0);
-        swingSeat.castShadow = true;
-        swingPivot.add(swingSeat);
-        grabbableObjects.push(swingBase);
-        const swingShadowSize = { w: 1.6, h: 0.7 };
 
         // --- 映画の中（2Dレベル）の構成要素 ---
         const movieObjects = new THREE.Group();
@@ -310,9 +243,6 @@
         const playerShadowPreview = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), previewPlayerShadowMat);
         playerShadowPreview.visible = false;
         movieObjects.add(playerShadowPreview);
-        const swingShadowPreview = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), previewShadowMat);
-        swingShadowPreview.visible = false;
-        movieObjects.add(swingShadowPreview);
 
         // --- ステージ（レベル）データ ---
         const levels = [
@@ -320,9 +250,7 @@
                 // Level 1: 基本のダイブ
                 playerStart: {x: -3, z: 5},
                 obstacleStarts: [
-                    {x: 2, z: 2},
-                    {x: 5, z: 3},
-                    {x: -1, z: 2}
+                    {x: 2, z: 2}
                 ],
                 platforms: [
                     {x: -8, y: 0, w: 10, h: 2},
@@ -334,9 +262,7 @@
                 // Level 2: 影の拡大（光源に障害物を近づけると影が大きくなるギミック）
                 playerStart: {x: -5, z: 8},
                 obstacleStarts: [
-                    {x: 0, z: 5},
-                    {x: 3, z: 6},
-                    {x: -3, z: 6}
+                    {x: 0, z: 5}
                 ],
                 platforms: [
                     {x: -12, y: 0, w: 6, h: 2},
@@ -348,9 +274,7 @@
                 // Level 3: 高低差（障害物の上に乗ってダイブすると影が高い位置に生成される）
                 playerStart: {x: 0, z: 8},
                 obstacleStarts: [
-                    {x: 2, z: 4},
-                    {x: -2, z: 4},
-                    {x: 0, z: 6}
+                    {x: 2, z: 4}
                 ],
                 platforms: [
                     {x: -10, y: -2, w: 6, h: 2},
@@ -364,8 +288,6 @@
         let currentLevel = 0;
         let solidShadowMeshes = []; // 実体化した影のメッシュ
         let activeShadowRectCount = 0;
-        let activeSwingShadowMesh = null;
-        let activeSwingShadowRectIndex = -1;
 
         // --- ステージのセットアップ ---
         function setupLevel(index) {
@@ -387,8 +309,6 @@
             solidShadowMeshes.forEach(mesh => movieObjects.remove(mesh));
             solidShadowMeshes = [];
             activeShadowRectCount = 0;
-            activeSwingShadowMesh = null;
-            activeSwingShadowRectIndex = -1;
 
             // 新しい地形を生成
             lvl.platforms.forEach(plat => {
@@ -419,8 +339,6 @@
                 solidRects.splice(Math.max(0, solidRects.length - activeShadowRectCount), activeShadowRectCount);
                 activeShadowRectCount = 0;
             }
-            activeSwingShadowMesh = null;
-            activeSwingShadowRectIndex = -1;
         }
 
         function setObstacleMeshesVisible(visible) {
@@ -431,11 +349,7 @@
 
         // --- ゲームの状態 ---
         let gameState = "3D"; // "3D", "TRANSITION", "2D"
-        const keys = {
-            w:false, a:false, s:false, d:false,
-            space:false, enter:false,
-            arrowUp:false, arrowDown:false, arrowLeft:false, arrowRight:false
-        };
+        const keys = { w:false, a:false, s:false, d:false, space:false, enter:false };
 
         // 3Dプレイヤーの物理変数
         let vy3d = 0;
@@ -553,8 +467,6 @@
 
         function getGrabHalfSize(obj) {
             if (obstacles.includes(obj)) return boxSize / 2;
-            if (obj === projectorHandle) return 0.45;
-            if (obj === swingBase) return 2.1;
             return playerSize / 2;
         }
 
@@ -563,14 +475,10 @@
         }
 
         function getObjectMinZ(obj) {
-            if (obj === projectorHandle) return 7;
-            if (obj === swingBase) return screenZ + 2.1 + 0.05;
             return screenZ + getGrabHalfSize(obj) + 0.05;
         }
 
         function getObjectMaxZ(obj) {
-            if (obj === projectorHandle) return 18;
-            if (obj === swingBase) return worldBounds.maxZ;
             return obstacles.includes(obj) ? Math.min(14, worldBounds.maxZ) : worldBounds.maxZ;
         }
 
@@ -605,7 +513,7 @@
             let nearestDist = Infinity;
             for (const obj of grabbableObjects) {
                 const dist = Math.hypot(obj.position.x - cursorPoint.x, obj.position.z - cursorPoint.z);
-                const reach = obj === projectorHandle ? 2.8 : (obj === swingBase ? 3.2 : (obstacles.includes(obj) ? 2.3 : 1.8));
+                const reach = obstacles.includes(obj) ? 2.3 : 1.8;
                 if (dist < reach && dist < nearestDist) {
                     nearest = obj;
                     nearestDist = dist;
@@ -627,7 +535,7 @@
             if (targetObj === player) vy3d = 0;
             const obstacleIndex = getObstacleIndex(targetObj);
             if (obstacleIndex >= 0) obstacleVys[obstacleIndex] = 0;
-            const label = targetObj === projectorHandle ? "光源" : (targetObj === swingBase ? "ブランコ" : (obstacleIndex >= 0 ? "障害物" : "プレイヤー"));
+            const label = obstacleIndex >= 0 ? "障害物" : "プレイヤー";
             setHandStatus(`ハンド操作: ${label}を掴み中`, "#b2ff59");
         }
 
@@ -642,21 +550,13 @@
             const tx = THREE.MathUtils.clamp(cursorPoint.x + grabOffset.x, worldBounds.minX + half, worldBounds.maxX - half);
             const depthZ = getHandDepthWorldZ(minZ, maxZ);
             const tz = THREE.MathUtils.clamp(depthZ + grabOffset.z, minZ, maxZ);
-            const maxY = grabbedObject === projectorHandle ? 16 : 9;
-            const minY = grabbedObject === projectorHandle ? 3 : (grabbedObject === swingBase ? 0 : half);
+            const maxY = 9;
+            const minY = half;
             const ty = THREE.MathUtils.clamp(half + (1 - handState.y) * 7.5, minY, maxY);
 
             grabbedObject.position.x = THREE.MathUtils.lerp(grabbedObject.position.x, tx, 0.3);
             grabbedObject.position.z = THREE.MathUtils.lerp(grabbedObject.position.z, tz, 0.2);
-            if (grabbedObject === swingBase) {
-                grabbedObject.position.y = 0;
-            } else {
-                grabbedObject.position.y = THREE.MathUtils.lerp(grabbedObject.position.y, ty, 0.3);
-            }
-            if (grabbedObject === projectorHandle) {
-                projectorLight.position.copy(projectorHandle.position);
-                updateLightDirection();
-            }
+            grabbedObject.position.y = THREE.MathUtils.lerp(grabbedObject.position.y, ty, 0.3);
 
             const obstacleIndex = getObstacleIndex(grabbedObject);
             if (obstacleIndex >= 0) obstacleVys[obstacleIndex] = 0;
@@ -797,10 +697,6 @@
             if(e.key.toLowerCase() === 's') keys.s = true;
             if(e.key.toLowerCase() === 'd') keys.d = true;
             if(e.code === 'Space') keys.space = true;
-            if(e.key === 'ArrowUp') keys.arrowUp = true;
-            if(e.key === 'ArrowDown') keys.arrowDown = true;
-            if(e.key === 'ArrowLeft') keys.arrowLeft = true;
-            if(e.key === 'ArrowRight') keys.arrowRight = true;
             if(e.code === 'Enter') {
                 if(!keys.enter && gameState === "3D") tryDive();
                 keys.enter = true;
@@ -812,10 +708,6 @@
             if(e.key.toLowerCase() === 's') keys.s = false;
             if(e.key.toLowerCase() === 'd') keys.d = false;
             if(e.code === 'Space') keys.space = false;
-            if(e.key === 'ArrowUp') keys.arrowUp = false;
-            if(e.key === 'ArrowDown') keys.arrowDown = false;
-            if(e.key === 'ArrowLeft') keys.arrowLeft = false;
-            if(e.key === 'ArrowRight') keys.arrowRight = false;
             if(e.code === 'Enter') keys.enter = false;
         });
 
@@ -870,7 +762,6 @@
 
         function updateProjectionPreview() {
             const projectedPlayer = clipRectToScreen(getProjectedRect(player, playerSize, playerSize));
-            const projectedSwing = clipRectToScreen(getProjectedRect(swingSeat, swingShadowSize.w, swingShadowSize.h));
 
             obstacles.forEach((obstacle, i) => {
                 const preview = obstacleShadowPreviews[i];
@@ -884,14 +775,6 @@
                 }
             });
 
-            if (projectedSwing) {
-                swingShadowPreview.visible = true;
-                swingShadowPreview.scale.set(projectedSwing.w, projectedSwing.h, 1);
-                swingShadowPreview.position.set(projectedSwing.x, projectedSwing.y, 0);
-            } else {
-                swingShadowPreview.visible = false;
-            }
-
             if (projectedPlayer) {
                 playerShadowPreview.visible = true;
                 playerShadowPreview.scale.set(projectedPlayer.w, projectedPlayer.h, 1);
@@ -901,38 +784,17 @@
             }
         }
 
-        function updateActiveSwingShadowIn2D() {
-            if (!activeSwingShadowMesh || activeSwingShadowRectIndex < 0 || gameState !== "2D") return;
-            const rect = clipRectToScreen(getProjectedRect(swingSeat, swingShadowSize.w, swingShadowSize.h));
-            if (rect) {
-                activeSwingShadowMesh.visible = true;
-                activeSwingShadowMesh.scale.set(rect.w, rect.h, 1);
-                activeSwingShadowMesh.position.set(rect.x, rect.y, 0);
-                if (solidRects[activeSwingShadowRectIndex]) {
-                    solidRects[activeSwingShadowRectIndex] = rect;
-                }
-            } else {
-                activeSwingShadowMesh.visible = false;
-                if (solidRects[activeSwingShadowRectIndex]) {
-                    solidRects[activeSwingShadowRectIndex] = { x: 9999, y: 9999, w: 0, h: 0 };
-                }
-            }
-        }
-
         // --- ダイブ処理（気持ちよさのコア） ---
         function tryDive() {
             if (grabbedObject) return;
             // プレイヤーがスクリーンに映る範囲にいるかチェック（簡易的）
             if (player.position.z < screenZ || player.position.z > projectorLight.position.z) return;
 
-            const projectedShadows = obstacles
+            const shadowRects = obstacles
                 .map(obstacle => clipRectToScreen(getProjectedRect(obstacle, boxSize, boxSize)))
-                .filter(Boolean)
-                .map(rect => ({ type: "obstacle", rect }));
-            const swingShadowRect = clipRectToScreen(getProjectedRect(swingSeat, swingShadowSize.w, swingShadowSize.h));
-            if (swingShadowRect) projectedShadows.push({ type: "swing", rect: swingShadowRect });
+                .filter(Boolean);
             const pRect = clipRectToScreen(getProjectedRect(player, playerSize, playerSize));
-            if (projectedShadows.length === 0 || !pRect) return;
+            if (shadowRects.length === 0 || !pRect) return;
 
             gameState = "TRANSITION";
             playHitSound();
@@ -949,18 +811,14 @@
             clearSolidShadows();
 
             // 実体化した影（真っ黒なブロック）をスクリーンに生成
-            projectedShadows.forEach(({ type, rect }) => {
+            shadowRects.forEach((rect) => {
                 const solidShadowMesh = new THREE.Mesh(new THREE.PlaneGeometry(rect.w, rect.h), solidShadowMat);
                 solidShadowMesh.position.set(rect.x, rect.y, 0);
                 movieObjects.add(solidShadowMesh);
                 solidShadowMeshes.push(solidShadowMesh);
                 solidRects.push(rect);
-                if (type === "swing") {
-                    activeSwingShadowMesh = solidShadowMesh;
-                    activeSwingShadowRectIndex = solidRects.length - 1;
-                }
             });
-            activeShadowRectCount = projectedShadows.length;
+            activeShadowRectCount = shadowRects.length;
             p2d.x = pRect.x;
             p2d.y = pRect.y;
             p2d.w = pRect.w;
@@ -973,7 +831,6 @@
             player.position.set(pRect.x, pRect.y, screenZ + 0.2);
             player.castShadow = false; // 2Dモード時は影を落とさない
             obstacleShadowPreviews.forEach(preview => preview.visible = false);
-            swingShadowPreview.visible = false;
             playerShadowPreview.visible = false;
 
             document.getElementById('mode-text').innerText = "現在のモード: 2D（映画の中）";
@@ -1129,25 +986,7 @@
             projectorLight.intensity = 2 + Math.random() * 0.2;
             updateHandInteraction();
             setObstacleMeshesVisible(gameState === "3D");
-            projectorHandle.visible = gameState === "3D";
-            swingBase.visible = gameState === "3D";
-
-            // ブランコを常時左右に振る
-            const t = clock.elapsedTime;
-            swingPivot.rotation.z = Math.sin(t * 1.35) * 0.45;
-
-            // 光源の手動操作（3D時のみ）
-            if (gameState === "3D") {
-                const lightMove = 7 * dt;
-                if (keys.arrowUp) projectorLight.position.y += lightMove;
-                if (keys.arrowDown) projectorLight.position.y -= lightMove;
-                if (keys.arrowLeft) lightYaw += 1.4 * dt;
-                if (keys.arrowRight) lightYaw -= 1.4 * dt;
-                projectorLight.position.x = THREE.MathUtils.clamp(projectorLight.position.x, -12, 12);
-                projectorLight.position.y = THREE.MathUtils.clamp(projectorLight.position.y, 2, 15);
-                projectorLight.position.z = THREE.MathUtils.clamp(projectorLight.position.z, 7, 18);
-                updateLightDirection();
-            }
+            lensGlow.position.copy(projectorLight.position);
 
             if (gameState === "3D") {
                 // 3Dモードのプレイヤー移動
@@ -1319,7 +1158,6 @@
                 const moveSpeed = 8;
                 const gravity = -25;
                 const jumpForce = 12;
-                updateActiveSwingShadowIn2D();
 
                 // 左右移動
                 if(keys.a) p2d.vx = -moveSpeed;
@@ -1369,11 +1207,9 @@
                     nextLevel();
                 }
                 obstacleShadowPreviews.forEach(preview => preview.visible = false);
-                swingShadowPreview.visible = false;
                 playerShadowPreview.visible = false;
             } else {
                 obstacleShadowPreviews.forEach(preview => preview.visible = false);
-                swingShadowPreview.visible = false;
                 playerShadowPreview.visible = false;
             }
 
