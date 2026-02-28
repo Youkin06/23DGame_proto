@@ -382,7 +382,7 @@
         const raycaster = new THREE.Raycaster();
         const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
         const floorHitPoint = new THREE.Vector3();
-        const frontLimitZ = 12; // 手前に来すぎない上限
+        const frontLimitZ = 13.5; // 手前側の可動域を少し広げる上限
         const worldBounds = {
             minX: -15,
             maxX: 15,
@@ -492,7 +492,10 @@
         function getHandDepthWorldZ(minZ = worldBounds.minZ, maxZ = worldBounds.maxZ) {
             const depthNorm = THREE.MathUtils.clamp(handState.depth, 0, 1);
             // 仕様: カメラに近いほど奥、遠いほど手前
-            return THREE.MathUtils.lerp(minZ, maxZ, 1 - depthNorm);
+            let t = 1 - depthNorm;
+            // 手前側（tが大きい側）を広めに使えるように補正
+            t = Math.pow(THREE.MathUtils.clamp(t, 0, 1), 0.72);
+            return THREE.MathUtils.lerp(minZ, maxZ, t);
         }
 
         function getHandPointOnFloor() {
